@@ -14,19 +14,26 @@ all tools in one project
 - Set env variables
 
   ```
-  export CLUSTER_NAME=all-in-one-cluster
+  export CLUSTER_NAME=cluster-all-in-one
   export REGION=ap-southeast-2
   export ACCOUNT_ID=<your-account-id>
   ```
 
 - Create cluster by eskctl
 
+  1. command line
+
   ```
   eksctl create cluster --name $CLUSTER_NAME --region $REGION --spot --instance-types=t3.medium --nodes-max=4 --node-volume-size=20 --dry-run
-  eksctl create cluster -f eks-all-in-one.yaml --dry-run
 
   # EKS auto mode
   eksctl create cluster --name $CLUSTER_NAME --region $REGION --enable-auto-mode --dry-run
+  ```
+
+  2. yaml file
+
+  ```
+  eksctl create cluster -f eks-all-in-one.yaml --dry-run
   ```
 
 - Create node group
@@ -83,7 +90,7 @@ all tools in one project
    kubectl get nodes
    ```
 
-### 1.2 Install IAM OIDC provider
+### 1.2 Install IAM OIDC provider (Optional)
 
 ```
 eksctl utils associate-iam-oidc-provider --cluster $CLUSTER_NAME --approve
@@ -106,11 +113,11 @@ eksctl utils associate-iam-oidc-provider --cluster $CLUSTER_NAME --approve
   ```
   eksctl create iamserviceaccount \
     --cluster $CLUSTER_NAME \
+    --region $REGION \
     --namespace kube-system \
     --name aws-load-balancer-controller \
     --attach-policy-arn arn:aws:iam::$ACCOUNT_ID:policy/AWSLoadBalancerControllerIAMPolicy \
     --override-existing-serviceaccounts \
-    --region $AWS_REGION \
     --approve
   ```
 
@@ -135,7 +142,7 @@ helm install aws-load-balancer-controller eks/aws-load-balancer-controller -n ku
   --set clusterName=$CLUSTER_NAME \
   --set serviceAccount.create=false \
   --set serviceAccount.name=aws-load-balancer-controller \
-  --set region=<your-region> \
+  --set region=$REGION \
   --set vpcId=<your-vpc-id>
 ```
 
@@ -179,6 +186,26 @@ curl -Lo v2_13_3_ingclass.yaml https://github.com/kubernetes-sigs/aws-load-balan
 kubectl apply -f v2_13_3_ingclass.yaml
 ```
 
+### 1.4c Nginx Ingress Controller
+
+- install
+
+```
+helm repo add ingress-nginx https://kubernetes.github.io/ingress-nginx
+
+kubectl create namespace ingress-nginx
+
+helm install ingress-nginx ingress-nginx --namespace ingress-nginx
+
+# create deployment
+kubectl create deployment demo  --image=httpd  --port=80
+# expose deployment as a service
+kubectl expose deployment demo
+#
+kubectl create ingress demo --class=nginx \
+  --rule /=demo:80
+```
+
 ### 1.5 EBS CSI Plugin configuration
 
 ```
@@ -202,51 +229,87 @@ eksctl create addon --name aws-ebs-csi-driver --cluster $CLUSTER_NAME --service-
 
 - Prometheus Helm Chart
 
-```
-kubectl create ns monitoring
+  ```
+  kubectl create ns monitoring
 
-helm repo add prometheus-community https://prometheus-community.github.io/helm-charts
-helm repo update
+  helm repo add prometheus-community https://prometheus-community.github.io/helm-charts
+  helm repo update
 
-# Alert Manger - custom_kube_prometheus_stack.yml
-helm install monitoring prometheus-community/kube-prometheus-stack \
--n monitoring \
--f ./custom_kube_prometheus_stack.yml
-```
+  # Alert Manger - custom_kube_prometheus_stack.yml
+  helm install monitoring prometheus-community/kube-prometheus-stack \
+  -n monitoring \
+  -f ./custom_kube_prometheus_stack.yml
+  ```
 
-```
-NOTES:
-kube-prometheus-stack has been installed. Check its status by running:
-kubectl --namespace monitoring get pods -l "release=monitoring"
+  ```
+  NOTES:
+  kube-prometheus-stack has been installed. Check its status by running:
+  kubectl --namespace monitoring get pods -l "release=monitoring"
 
-Get Grafana 'admin' user password by running:
+  Get Grafana 'admin' user password by running:
 
-kubectl --namespace monitoring get secrets monitoring-grafana -o jsonpath="{.data.admin-password}" | base64 -d ; echo
+  kubectl --namespace monitoring get secrets monitoring-grafana -o jsonpath="{.data.admin-password}" | base64 -d ; echo
 
-Access Grafana local instance:
+  Access Grafana local instance:
 
-export POD_NAME=$(kubectl --namespace monitoring get pod -l "app.kubernetes.io/name=grafana,app.kubernetes.io/instance=monitoring" -oname)
-kubectl --namespace monitoring port-forward $POD_NAME 3000
+  export POD_NAME=$(kubectl --namespace monitoring get pod -l "app.kubernetes.io/name=grafana,app.kubernetes.io/instance=monitoring" -oname)
+  kubectl --namespace monitoring port-forward $POD_NAME 3000
 
-Visit https://github.com/prometheus-operator/kube-prometheus for instructions on how to create & configure Alertmanager and Prometheus instances using the Operator.
-```
+  Visit https://github.com/prometheus-operator/kube-prometheus for instructions on how to create & configure Alertmanager and Prometheus instances using the Operator.
+  ```
 
 - Prometheus UI:
-  kubectl port-forward service/prometheus-operated -n monitoring 9090:9090
 
-NOTE: If you are using an EC2 Instance or Cloud VM, you need to pass --address 0.0.0.0 to the above command. Then you can access the UI on instance-ip:port
+  - port-forward
+
+  ```
+  kubectl port-forward service/prometheus-operated -n monitoring 9090:9090
+  ```
+
+  NOTE: If you are using an EC2 Instance or Cloud VM, you need to pass --address 0.0.0.0 to the above command. Then you can access the UI on instance-ip:port
+
+  - LoadBalancer
+  
+  ```
+  kubectl patch svc monitoring-grafana -n monitoring -p '{"spec": {"type": "LoadBalancer"}}'
+  ```
+
+  - Ingress
+  
 
 - Grafana UI: (admin:prom-operator)
+
+  ```
   kubectl port-forward service/monitoring-grafana -n monitoring 8080:80
+  ```
 
 - Alertmanager UI:
+
+  ```
   kubectl port-forward service/alertmanager-operated -n monitoring 9093:9093
+  ```
+
+- Configure Alertmanager
+
+  - Before configuring Alertmanager, we need credentials to send emails. For this project, we are using Gmail, but any SMTP provider like AWS SES can be used. so please grab the credentials for that.
+
+  - Open your Google account settings and search App password & create a new password & put the password in day-4/alerts-alertmanager-servicemonitor-manifest/email-secret.yml
+
+  - One last thing, please add your email id in the day-4/alerts-alertmanager-servicemonitor-manifest/alertmanagerconfig.yml
+
+  - **HighCpuUsage**: Triggers a warning alert if the average CPU usage across instances exceeds 50% for more than 5 minutes.
+
+  - **PodRestart**: Triggers a critical alert immediately if any pod restarts more than 2 times.
+
+  ```
+  kubectl apply -k alerts-alertmanager-servicemonitor-manifest/
+  ```
 
 - Access from browser
 
   ```
   http://127.0.0.1:9090/
-  http://127.0.0.1:8080/
+  http://127.0.0.1:8080/ (admin:prom-operator)
   http://127.0.0.1:9093/
 
   http://monitoring-kube-prometheus-prometheus.monitoring:9090/
@@ -270,7 +333,7 @@ helm install elasticsearch \
 Retrieve Elasticsearch Username & Password
 
 ```
-# for username
+# for username (elastic)
 kubectl get secrets --namespace=logging elasticsearch-master-credentials -ojsonpath='{.data.username}' | base64 -d
 # for password
 kubectl get secrets --namespace=logging elasticsearch-master-credentials -ojsonpath='{.data.password}' | base64 -d
@@ -305,18 +368,6 @@ helm install fluent-bit fluent/fluent-bit -f fluentbit-values.yaml -n logging
 
 # upgrade after editing yaml file
 helm upgrade fluent-bit fluent/fluent-bit -f fluentbit-values.yaml -n logging
-```
-
-#### Sample workload
-
-```
-kubectl create ns dev
-
-kubectl apply -k kubernetes-manifest/
-```
-
-```
-kubectl run busybox-crash --image=busybox -- /bin/sh -c "exit 1"
 ```
 
 ### 2.3 Tracing (Traces)
@@ -362,6 +413,56 @@ kubectl run busybox-crash --image=busybox -- /bin/sh -c "exit 1"
   ```
 
 ## Misc
+
+### Reference
+
+- Amazon EKS User Guide
+
+  https://docs.aws.amazon.com/eks/latest/userguide/quickstart.html
+
+### Sample workload
+
+Game 2048
+
+```
+kubectl create namespace game-2048
+
+kubectl apply -n game-2048 -f https://raw.githubusercontent.com/kubernetes-sigs/aws-load-balancer-controller/v2.8.0/docs/examples/2048/2048_full.yaml
+```
+
+### Sample workload
+
+```
+kubectl create ns dev
+
+kubectl apply -k kubernetes-manifest/
+```
+
+- Write Custom Metrics
+
+  - Please take a look at day-4/application/service-a/index.js file to learn more about custom metrics. below is the brief overview
+  - Express Setup: Initializes an Express application and sets up logging with Morgan.
+  - Logging with Pino: Defines a custom logging function using Pino for structured logging.
+  - Prometheus Metrics with prom-client: Integrates Prometheus for monitoring HTTP requests using the prom-client library:
+  - http_requests_total: counter
+  - http_request_duration_seconds: histogram
+  - http_request_duration_summary_seconds: summary
+  - node_gauge_example: gauge for tracking async task duration
+
+- Basic Routes:
+  - / : Returns a "Running" status.
+  - /healthy: Returns the health status of the server.
+  - /serverError: Simulates a 500 Internal Server Error.
+  - /notFound: Simulates a 404 Not Found error.
+  - /logs: Generates logs using the custom logging function.
+  - /crash: Simulates a server crash by exiting the process.
+  - /example: Tracks async task duration with a gauge.
+  - /metrics: Exposes Prometheus metrics endpoint.
+  - /call-service-b: To call service b & receive data from service b
+
+```
+kubectl run busybox-crash --image=busybox -- /bin/sh -c "exit 1"
+```
 
 ### Folder Structure
 

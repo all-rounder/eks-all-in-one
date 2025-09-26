@@ -3,9 +3,9 @@ apiVersion: eksctl.io/v1alpha5
 kind: ClusterConfig
 
 metadata:
-  name: all-in-one-cluster
+  name: cluster-all-in-one
   region: ap-southeast-2
-  version: "1.33"
+  version: "1.32"
 
 vpc:
   cidr: "10.0.0.0/16"
@@ -13,9 +13,9 @@ vpc:
     gateway: Single
 
 managedNodeGroups:
-  - name: node-group-large
+  - name: nodegroup-spot-medium
     spot: true
-    instanceType: m7g.large
+    instanceType: t3.medium
     desiredCapacity: 2
     minSize: 2
     maxSize: 4

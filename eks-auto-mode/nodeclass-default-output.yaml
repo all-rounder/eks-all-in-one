@@ -1,0 +1,82 @@
+apiVersion: eks.amazonaws.com/v1
+kind: NodeClass
+metadata:
+  annotations:
+    eks.amazonaws.com/nodeclass-hash: "17638971277352118168"
+    eks.amazonaws.com/nodeclass-hash-version: v2
+  creationTimestamp: "2025-08-12T03:58:03Z"
+  finalizers:
+  - eks.amazonaws.com/termination
+  generation: 1
+  labels:
+    app.kubernetes.io/managed-by: eks
+  name: default
+  resourceVersion: "23611"
+  uid: b44d7cc5-70ce-49c6-b3a8-923ab51788be
+spec:
+  ephemeralStorage:
+    iops: 3000
+    size: 80Gi
+    throughput: 125
+  networkPolicy: DefaultAllow
+  networkPolicyEventLogs: Disabled
+  role: AmazonEKSAutoNodeRole
+  securityGroupSelectorTerms:
+  - id: sg-0f82c69b985924b2f
+  snatPolicy: Random
+  subnetSelectorTerms:
+  - id: subnet-061aa122c96661e5b
+  - id: subnet-0999336ee7732cbcf
+  - id: subnet-0ea1300977ad00de5
+status:
+  conditions:
+  - lastTransitionTime: "2025-08-12T03:58:05Z"
+    message: ""
+    observedGeneration: 1
+    reason: SubnetsReady
+    status: "True"
+    type: SubnetsReady
+  - lastTransitionTime: "2025-08-12T03:58:05Z"
+    message: ""
+    observedGeneration: 1
+    reason: SecurityGroupsReady
+    status: "True"
+    type: SecurityGroupsReady
+  - lastTransitionTime: "2025-08-12T03:58:05Z"
+    message: ""
+    observedGeneration: 1
+    reason: InstanceProfileReady
+    status: "True"
+    type: InstanceProfileReady
+  - lastTransitionTime: "2025-08-12T03:58:05Z"
+    message: ""
+    observedGeneration: 1
+    reason: CapacityReservationsReady
+    status: "True"
+    type: CapacityReservationsReady
+  - lastTransitionTime: "2025-08-12T03:58:38Z"
+    message: ""
+    observedGeneration: 1
+    reason: ValidationSucceeded
+    status: "True"
+    type: ValidationSucceeded
+  - lastTransitionTime: "2025-08-12T03:58:38Z"
+    message: ""
+    observedGeneration: 1
+    reason: Ready
+    status: "True"
+    type: Ready
+  instanceProfile: eks-ap-southeast-2-automode-cluster-12946599706808694407
+  securityGroups:
+  - id: sg-0f82c69b985924b2f
+    name: eks-cluster-sg-automode-cluster-2065126657
+  subnets:
+  - id: subnet-0999336ee7732cbcf
+    zone: ap-southeast-2a
+    zoneID: apse2-az3
+  - id: subnet-061aa122c96661e5b
+    zone: ap-southeast-2c
+    zoneID: apse2-az2
+  - id: subnet-0ea1300977ad00de5
+    zone: ap-southeast-2b
+    zoneID: apse2-az1

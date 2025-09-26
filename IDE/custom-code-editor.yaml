@@ -1,0 +1,1162 @@
+Description: Custom Code Editor instance with comprehensive development tools for Terraform related workshops. Hybrid of AWS Code Editor and VS Code Server features. Version 1.0.0
+
+Parameters:
+  CodeEditorUser:
+    Type: String
+    Description: UserName for Code Editor
+    Default: participant
+  InstanceName:
+    Type: String
+    Description: Code Editor EC2 instance name
+    Default: CustomCodeEditor
+  InstanceVolumeSize:
+    Type: Number
+    Description: Code Editor EC2 instance volume size in GB
+    Default: 20
+  InstanceType:
+    Description: Code Editor EC2 instance type
+    Type: String
+    Default: t3.small
+  InstanceOperatingSystem:
+    Description: Code Editor EC2 operating system
+    Type: String
+    Default: Ubuntu-24
+    AllowedValues: ["AmazonLinux-2023", "Ubuntu-22", "Ubuntu-24"]
+  HomeFolder:
+    Type: String
+    Description: Folder to open in Code Editor
+    Default: /workshop
+  DevServerBasePath:
+    Type: String
+    Description: Base path for the application to be added to Nginx sites-available list
+    Default: app
+  DevServerPort:
+    Type: Number
+    Description: Port for the DevServer
+    Default: 8081
+  RepoUrl:
+    Description: Remote repo URL to clone. To not clone a remote repo, leave blank
+    Type: String
+    Default: "https://github.com/novekm/workshop-terraform-cicd-and-testing-on-aws"
+  AssetZipS3Path:
+    Description: S3 path holding the asset zip file to be copied into the home folder. To not include any assets, leave blank
+    Type: String
+    Default: ""
+  BranchZipS3Path:
+    Description: S3 path holding the branches zip file to be checked into the git repo, with each folder being a branch. To leave empty, leave blank
+    Type: String
+    Default: ""
+  FolderZipS3Path:
+    Description: S3 path holding the folder zip file, with each folder being a subfolder of the home directory. To not include any folders, leave blank
+    Type: String
+    Default: ""
+  InstallTerraformTools:
+    Type: String
+    Description: Install Terraform development tools (tfenv, Checkov)
+    Default: "true"
+    AllowedValues: ["true", "false"]
+  InstallPackerTools:
+    Type: String
+    Description: Install HashiCorp Packer
+    Default: "false"
+    AllowedValues: ["true", "false"]
+  InstallNodeJS:
+    Type: String
+    Description: Install Node.js and npm
+    Default: "true"
+    AllowedValues: ["true", "false"]
+  InstallDockerTools:
+    Type: String
+    Description: Install Docker and related tools
+    Default: "true"
+    AllowedValues: ["true", "false"]
+  InstallPythonTools:
+    Type: String
+    Description: Install Python development tools
+    Default: "true"
+    AllowedValues: ["true", "false"]
+  UseCustomVPC:
+    Type: String
+    Description: Create custom VPC or use default VPC
+    Default: "false"
+    AllowedValues: ["true", "false"]
+  AuthMethod:
+    Type: String
+    Description: |
+      Code Editor authentication method:
+      - 'token': URL includes password automatically, click CloudFormation output URL to access directly
+      - 'password': Shows login page, manually enter the password from CloudFormation outputs when prompted
+    Default: "token"
+    AllowedValues: ["token", "password"]
+
+Conditions:
+  IsAL2023: !Equals [!Ref InstanceOperatingSystem, "AmazonLinux-2023"]
+  IsUbuntu: !Not [!Equals [!Ref InstanceOperatingSystem, "AmazonLinux-2023"]]
+  IsGraviton:
+    !Not [
+      !Equals [
+        !Select [0, !Split ["g", !Select [0, !Split [".", !Ref InstanceType]]]],
+        !Select [0, !Split [".", !Ref InstanceType]],
+      ],
+    ]
+  CreateCustomVPC: !Equals [!Ref UseCustomVPC, "true"]
+  InstallTerraform: !Equals [!Ref InstallTerraformTools, "true"]
+  InstallNode: !Equals [!Ref InstallNodeJS, "true"]
+  InstallDocker: !Equals [!Ref InstallDockerTools, "true"]
+  InstallPython: !Equals [!Ref InstallPythonTools, "true"]
+  InstallPacker: !Equals [!Ref InstallPackerTools, "true"]
+  IsTokenAuth: !Equals [!Ref AuthMethod, "token"]
+
+Metadata:
+  AWS::CloudFormation::Interface:
+    ParameterGroups:
+      - Label:
+          default: Instance Configuration
+        Parameters:
+          - InstanceName
+          - InstanceVolumeSize
+          - InstanceType
+          - InstanceOperatingSystem
+      - Label:
+          default: Code Editor Configuration
+        Parameters:
+          - CodeEditorUser
+          - HomeFolder
+          - DevServerBasePath
+          - DevServerPort
+          - AuthMethod
+      - Label:
+          default: Git and Assets
+        Parameters:
+          - RepoUrl
+          - AssetZipS3Path
+          - BranchZipS3Path
+          - FolderZipS3Path
+      - Label:
+          default: Development Tools
+        Parameters:
+          - InstallTerraformTools
+          - InstallNodeJS
+          - InstallDockerTools
+          - InstallPythonTools
+          - InstallPackerTools
+      - Label:
+          default: Network Configuration
+        Parameters:
+          - UseCustomVPC
+
+Mappings:
+  ArmImage:
+    Ubuntu-22:
+      ImageId: "{{resolve:ssm:/aws/service/canonical/ubuntu/server/jammy/stable/current/arm64/hvm/ebs-gp2/ami-id}}"
+    Ubuntu-24:
+      ImageId: "{{resolve:ssm:/aws/service/canonical/ubuntu/server/noble/stable/current/arm64/hvm/ebs-gp3/ami-id}}"
+    AmazonLinux-2023:
+      ImageId: "{{resolve:ssm:/aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-arm64}}"
+  AmdImage:
+    Ubuntu-22:
+      ImageId: "{{resolve:ssm:/aws/service/canonical/ubuntu/server/jammy/stable/current/amd64/hvm/ebs-gp2/ami-id}}"
+    Ubuntu-24:
+      ImageId: "{{resolve:ssm:/aws/service/canonical/ubuntu/server/noble/stable/current/amd64/hvm/ebs-gp3/ami-id}}"
+    AmazonLinux-2023:
+      ImageId: "{{resolve:ssm:/aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-x86_64}}"
+  AWSRegionsPrefixListID:
+    ap-northeast-1:
+      PrefixList: pl-58a04531
+    ap-northeast-2:
+      PrefixList: pl-22a6434b
+    ap-south-1:
+      PrefixList: pl-9aa247f3
+    ap-southeast-1:
+      PrefixList: pl-31a34658
+    ap-southeast-2:
+      PrefixList: pl-b8a742d1
+    ca-central-1:
+      PrefixList: pl-38a64351
+    eu-central-1:
+      PrefixList: pl-a3a144ca
+    eu-north-1:
+      PrefixList: pl-fab65393
+    eu-west-1:
+      PrefixList: pl-4fa04526
+    eu-west-2:
+      PrefixList: pl-93a247fa
+    eu-west-3:
+      PrefixList: pl-75b1541c
+    sa-east-1:
+      PrefixList: pl-5da64334
+    us-east-1:
+      PrefixList: pl-3b927c52
+    us-east-2:
+      PrefixList: pl-b6a144df
+    us-west-1:
+      PrefixList: pl-4ea04527
+    us-west-2:
+      PrefixList: pl-82a045eb
+  Subnets:
+    VPC:
+      CIDR: 10.0.0.0/16
+    PublicOne:
+      CIDR: 10.0.1.0/24
+
+Resources:
+  # VPC Resources (conditional)
+  VPC:
+    Type: AWS::EC2::VPC
+    Condition: CreateCustomVPC
+    Properties:
+      CidrBlock: !FindInMap [Subnets, VPC, CIDR]
+      EnableDnsSupport: true
+      EnableDnsHostnames: true
+
+  InternetGateway:
+    Type: AWS::EC2::InternetGateway
+    Condition: CreateCustomVPC
+
+  GatewayAttachment:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Condition: CreateCustomVPC
+    Properties:
+      VpcId: !Ref VPC
+      InternetGatewayId: !Ref InternetGateway
+
+  PublicSubnetOne:
+    Type: AWS::EC2::Subnet
+    Condition: CreateCustomVPC
+    Properties:
+      CidrBlock: !FindInMap [Subnets, PublicOne, CIDR]
+      VpcId: !Ref VPC
+      MapPublicIpOnLaunch: true
+      AvailabilityZone: !Select [0, !GetAZs ""]
+
+  PublicOneRouteTable:
+    Type: AWS::EC2::RouteTable
+    Condition: CreateCustomVPC
+    Properties:
+      VpcId: !Ref VPC
+
+  PublicOneRoute:
+    Type: AWS::EC2::Route
+    Condition: CreateCustomVPC
+    DependsOn: GatewayAttachment
+    Properties:
+      RouteTableId: !Ref PublicOneRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref InternetGateway
+
+  PublicOneRouteTableAssoc:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Condition: CreateCustomVPC
+    Properties:
+      RouteTableId: !Ref PublicOneRouteTable
+      SubnetId: !Ref PublicSubnetOne
+
+  # Security Group
+  SecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Security Group for Custom Code Editor - only allow CloudFront ingress
+      SecurityGroupIngress:
+        - Description: Allow HTTP from com.amazonaws.global.cloudfront.origin-facing
+          IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          SourcePrefixListId:
+            !FindInMap [AWSRegionsPrefixListID, !Ref "AWS::Region", PrefixList]
+      VpcId: !If [CreateCustomVPC, !Ref VPC, !Ref "AWS::NoValue"]
+
+  # Secrets and Password Management
+  CodeEditorSecret:
+    Type: AWS::SecretsManager::Secret
+    DeletionPolicy: Delete
+    UpdateReplacePolicy: Delete
+    Properties:
+      Name: !Sub
+        - ${InstanceName}-${RandomGUID}
+        - RandomGUID:
+            !Select [
+              0,
+              !Split ["-", !Select [2, !Split ["/", !Ref AWS::StackId]]],
+            ]
+      Description: Code Editor user details
+      GenerateSecretString:
+        PasswordLength: 16
+        SecretStringTemplate: !Sub '{"username":"${CodeEditorUser}"}'
+        GenerateStringKey: "password"
+        ExcludePunctuation: true
+
+  SecretPlaintextLambdaRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: !Sub lambda.${AWS::URLSuffix}
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - !Sub arn:${AWS::Partition}:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: AwsSecretsManager
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Action:
+                  - secretsmanager:GetSecretValue
+                Resource: !Ref CodeEditorSecret
+
+  SecretPlaintextLambda:
+    Type: AWS::Lambda::Function
+    Properties:
+      Description: Return the value of the secret
+      Handler: index.lambda_handler
+      Runtime: python3.13
+      MemorySize: 128
+      Timeout: 10
+      Architectures:
+        - arm64
+      Role: !GetAtt SecretPlaintextLambdaRole.Arn
+      Code:
+        ZipFile: |
+          import boto3
+          import json
+          import cfnresponse
+          import logging
+
+          logger = logging.getLogger()
+          logger.setLevel(logging.INFO)
+
+          def lambda_handler(event, context):
+              try:
+                  if event['RequestType'] == 'Delete':
+                      cfnresponse.send(event, context, cfnresponse.SUCCESS, responseData={}, reason='No action to take')
+                  else:
+                      resource_properties = event['ResourceProperties']
+                      secret_name = resource_properties['SecretArn']
+                      secrets_mgr = boto3.client('secretsmanager')
+                      secret = secrets_mgr.get_secret_value(SecretId = secret_name)
+                      secret_value = secret['SecretString']
+                      responseData = json.loads(secret_value)
+                      cfnresponse.send(event, context, cfnresponse.SUCCESS, responseData=responseData, reason='OK', noEcho=True)
+              except Exception as e:
+                  logger.error(e)
+                  cfnresponse.send(event, context, cfnresponse.FAILED, responseData={}, reason=str(e))
+
+  SecretPlaintext:
+    Type: Custom::SecretPlaintextLambda
+    Properties:
+      ServiceToken: !GetAtt SecretPlaintextLambda.Arn
+      ServiceTimeout: 15
+      SecretArn: !Ref CodeEditorSecret
+
+  # SSM Document for bootstrapping
+  CodeEditorSSMDoc:
+    Type: AWS::SSM::Document
+    Properties:
+      DocumentType: Command
+      Content:
+        schemaVersion: "2.2"
+        description: Bootstrap Custom Code Editor instance with comprehensive development tools
+        parameters:
+          LinuxFlavor:
+            type: String
+            default: "ubuntu"
+          CodeEditorPassword:
+            type: String
+            default: !Ref AWS::StackId
+          InstallTerraformTools:
+            type: String
+            default: "true"
+          InstallNodeJS:
+            type: String
+            default: "true"
+          InstallDockerTools:
+            type: String
+            default: "true"
+          InstallPythonTools:
+            type: String
+            default: "true"
+          InstallPackerTools:
+            type: String
+            default: "false"
+          AuthMethod:
+            type: String
+            default: "token"
+        mainSteps:
+          - name: InstallCloudWatchAgent
+            action: aws:configurePackage
+            inputs:
+              name: AmazonCloudWatchAgent
+              action: Install
+          - name: ConfigureCloudWatchAgent
+            action: aws:runDocument
+            inputs:
+              documentType: SSMDocument
+              documentPath: AmazonCloudWatch-ManageAgent
+              documentParameters:
+                action: configure
+                mode: ec2
+                optionalConfigurationSource: default
+                optionalRestart: "yes"
+          - name: InstallBasePackagesDnf
+            action: aws:runShellScript
+            precondition:
+              StringEquals:
+                - "{{ LinuxFlavor }}"
+                - al2023
+            inputs:
+              timeoutSeconds: 300
+              runCommand:
+                - "#!/bin/bash"
+                - set -euo pipefail
+                - dnf install -y --allowerasing curl gnupg whois argon2 unzip nginx openssl jq
+          - name: InstallBasePackagesApt
+            action: aws:runShellScript
+            precondition:
+              StringEquals:
+                - "{{ LinuxFlavor }}"
+                - ubuntu
+            inputs:
+              timeoutSeconds: 300
+              runCommand:
+                - "#!/bin/bash"
+                - set -euo pipefail
+                - apt-get -q update && DEBIAN_FRONTEND=noninteractive apt-get install -y -q curl gnupg whois argon2 unzip nginx openssl locales locales-all apt-transport-https ca-certificates software-properties-common jq
+          - name: AddUser
+            action: aws:runShellScript
+            inputs:
+              timeoutSeconds: 300
+              runCommand:
+                - "#!/bin/bash"
+                - !Sub |
+                  if [[ "{{ LinuxFlavor }}" == "al2023" ]]; then
+                    echo 'Adding user: ${CodeEditorUser}'
+                    adduser -c '' ${CodeEditorUser}
+                    passwd -l ${CodeEditorUser}
+                    echo "${CodeEditorUser}:{{ CodeEditorPassword }}" | chpasswd
+                    usermod -aG wheel ${CodeEditorUser}
+                    sed -i 's/# %wheel/%wheel/g' /etc/sudoers
+                  else
+                    if [[ "${CodeEditorUser}" == "ubuntu" ]]; then
+                      echo 'Using existing user: ${CodeEditorUser}'
+                    else
+                      echo 'Adding user: ${CodeEditorUser}'
+                      adduser --disabled-password --gecos '' ${CodeEditorUser}
+                      echo "${CodeEditorUser}:{{ CodeEditorPassword }}" | chpasswd
+                      usermod -aG sudo ${CodeEditorUser}
+                    fi
+                    tee /etc/sudoers.d/91-code-editor-user <<EOF
+                  ${CodeEditorUser} ALL=(ALL) NOPASSWD:ALL
+                  EOF
+                  fi
+                - !Sub mkdir -p /home/${CodeEditorUser} && chown -R ${CodeEditorUser}:${CodeEditorUser} /home/${CodeEditorUser}
+          - name: UpdateProfile
+            action: aws:runShellScript
+            inputs:
+              timeoutSeconds: 300
+              runCommand:
+                - "#!/bin/bash"
+                - echo LANG=en_US.utf-8 >> /etc/environment
+                - echo LC_ALL=en_US.UTF-8 >> /etc/environment
+                - !Sub echo 'PATH=$PATH:/home/${CodeEditorUser}/.local/bin' >> /home/${CodeEditorUser}/.bashrc
+                - !Sub echo 'export PATH' >> /home/${CodeEditorUser}/.bashrc
+                - !Sub echo 'export AWS_REGION=${AWS::Region}' >> /home/${CodeEditorUser}/.bashrc
+                - !Sub echo 'export AWS_ACCOUNTID=${AWS::AccountId}' >> /home/${CodeEditorUser}/.bashrc
+                - !Sub echo 'export NEXT_TELEMETRY_DISABLED=1' >> /home/${CodeEditorUser}/.bashrc
+                - !Sub echo "export PS1='\\[\\033[01;32m\\]\\u:\\[\\033[01;34m\\]\\w\\[\\033[00m\\]\\$ '" >> /home/${CodeEditorUser}/.bashrc
+                - !Sub chown -R ${CodeEditorUser}:${CodeEditorUser} /home/${CodeEditorUser}
+          - name: InstallAWSCLI
+            action: aws:runShellScript
+            inputs:
+              timeoutSeconds: 300
+              runCommand:
+                - "#!/bin/bash"
+                - set -euo pipefail
+                - curl -fsSL https://awscli.amazonaws.com/awscli-exe-linux-$(uname -m).zip -o /tmp/aws-cli.zip
+                - unzip -q -d /tmp /tmp/aws-cli.zip
+                - sudo /tmp/aws/install
+                - rm -rf /tmp/aws
+                - echo "AWS CLI installed. Checking configuration"
+                - aws --version
+          - name: InstallGit
+            action: aws:runShellScript
+            inputs:
+              timeoutSeconds: 300
+              runCommand:
+                - "#!/bin/bash"
+                - set -euo pipefail
+                - |
+                  if [[ "{{ LinuxFlavor }}" == "al2023" ]]; then
+                    dnf install -y git
+                  else
+                    add-apt-repository ppa:git-core/ppa
+                    apt-get -q update && DEBIAN_FRONTEND=noninteractive apt-get install -y -q git
+                  fi
+                - !Sub sudo -u ${CodeEditorUser} git config --global user.email "participant@example.com"
+                - !Sub sudo -u ${CodeEditorUser} git config --global user.name "Workshop Participant"
+                - !Sub sudo -u ${CodeEditorUser} git config --global init.defaultBranch "main"
+                - echo "Git installed. Checking configuration"
+                - git --version
+          - name: InstallHomebrew
+            action: aws:runShellScript
+            inputs:
+              timeoutSeconds: 600
+              runCommand:
+                - "#!/bin/bash"
+                - !Sub sudo -u ${CodeEditorUser} /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+                - !Sub (echo; echo 'eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv)"') >> /home/${CodeEditorUser}/.bashrc
+                - echo "Homebrew installed. Checking configuration"
+                - !Sub sudo -u ${CodeEditorUser} /bin/bash -c 'eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv)"; brew -v'
+          - name: InstallTerraformTools
+            action: aws:runShellScript
+            precondition:
+              StringEquals:
+                - "{{ InstallTerraformTools }}"
+                - "true"
+            inputs:
+              timeoutSeconds: 600
+              runCommand:
+                - "#!/bin/bash"
+                - !Sub sudo -u ${CodeEditorUser} /bin/bash -c 'eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv)"; export PATH="$PATH:/home/${CodeEditorUser}/.local/bin"; brew install tfenv checkov'
+                - !Sub sudo -u ${CodeEditorUser} /bin/bash -c 'eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv)"; export PATH="$PATH:/home/${CodeEditorUser}/.local/bin"; tfenv use latest'
+                - echo "Terraform tools installed"
+          - name: InstallPackerTools
+            action: aws:runShellScript
+            precondition:
+              StringEquals:
+                - "{{ InstallPackerTools }}"
+                - "true"
+            inputs:
+              timeoutSeconds: 600
+              runCommand:
+                - "#!/bin/bash"
+                - !Sub sudo -u ${CodeEditorUser} /bin/bash -c 'eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv)"; brew install packer'
+                - echo "Packer installed"
+                - packer version
+          - name: InstallNodeJS
+            action: aws:runShellScript
+            precondition:
+              StringEquals:
+                - "{{ InstallNodeJS }}"
+                - "true"
+            inputs:
+              timeoutSeconds: 300
+              runCommand:
+                - "#!/bin/bash"
+                - |
+                  if [[ "{{ LinuxFlavor }}" == "ubuntu" ]]; then
+                    curl -fsSL https://deb.nodesource.com/setup_20.x | bash -
+                    apt-get install -y nodejs
+                  else
+                    dnf install -y nodejs npm
+                  fi
+                - echo "Node.js and npm installed"
+                - node -v && npm -v
+          - name: InstallPythonTools
+            action: aws:runShellScript
+            precondition:
+              StringEquals:
+                - "{{ InstallPythonTools }}"
+                - "true"
+            inputs:
+              timeoutSeconds: 300
+              runCommand:
+                - "#!/bin/bash"
+                - |
+                  if [[ "{{ LinuxFlavor }}" == "ubuntu" ]]; then
+                    apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y python3-pip python3.10-venv python3-boto3 python3-pytest
+                  else
+                    dnf install -y python3-pip python3-boto3 python3-pytest
+                  fi
+                - !Sub echo 'alias pytest=pytest-3' >> /home/${CodeEditorUser}/.bashrc
+                - echo "Python tools installed"
+                - python3 --version && pip3 --version
+          - name: InstallGitRemoteS3
+            action: aws:runShellScript
+            inputs:
+              timeoutSeconds: 300
+              runCommand:
+                - "#!/bin/bash"
+                - !Sub sudo -u ${CodeEditorUser} pip3 install --user git-remote-s3
+                - echo "git-remote-s3 installed"
+          - name: InstallDockerTools
+            action: aws:runShellScript
+            precondition:
+              StringEquals:
+                - "{{ InstallDockerTools }}"
+                - "true"
+            inputs:
+              timeoutSeconds: 600
+              runCommand:
+                - "#!/bin/bash"
+                - |
+                  if [[ "{{ LinuxFlavor }}" == "ubuntu" ]]; then
+                    curl -fsSL https://download.docker.com/linux/ubuntu/gpg | gpg --dearmor -o /usr/share/keyrings/docker-archive-keyring.gpg
+                    echo "deb [signed-by=/usr/share/keyrings/docker-archive-keyring.gpg] https://download.docker.com/linux/ubuntu jammy stable" >> /etc/apt/sources.list.d/docker.list
+                    apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y docker-ce docker-ce-cli containerd.io
+                  else
+                    dnf install -y docker
+                  fi
+                - !Sub usermod -aG docker ${CodeEditorUser}
+                - systemctl enable docker && systemctl start docker
+                - echo "Docker installed"
+                - docker --version
+          - name: CloneRepo
+            action: aws:runShellScript
+            inputs:
+              timeoutSeconds: 600
+              runCommand:
+                - "#!/bin/bash"
+                - !Sub |
+                  if [[ -z "${RepoUrl}" ]]; then
+                    echo "No Repo"
+                  else
+                    mkdir -p ${HomeFolder} && chown -R ${CodeEditorUser}:${CodeEditorUser} ${HomeFolder}
+                    sudo -u ${CodeEditorUser} git clone ${RepoUrl} ${HomeFolder}/workshop-terraform-cicd-and-testing-on-aws
+                    echo "Repo ${RepoUrl} cloned. Checking configuration"
+                    ls -la ${HomeFolder}
+                    sudo -u ${CodeEditorUser} git -C ${HomeFolder}/workshop-terraform-cicd-and-testing-on-aws remote -v
+                  fi
+          - name: DownloadAssets
+            action: aws:runShellScript
+            inputs:
+              timeoutSeconds: 600
+              runCommand:
+                - "#!/bin/bash"
+                - !Sub |
+                  if [[ -z "${AssetZipS3Path}" ]]; then
+                    echo "No assets"
+                  else
+                    mkdir -p ${HomeFolder} && chown -R ${CodeEditorUser}:${CodeEditorUser} ${HomeFolder}
+                    aws s3 cp s3://${AssetZipS3Path} /tmp/asset.zip
+                    unzip -o /tmp/asset.zip -d ${HomeFolder}
+                    chown -R ${CodeEditorUser}:${CodeEditorUser} ${HomeFolder}
+                    if [[ -d ${HomeFolder}/.git ]]; then
+                      sudo -u ${CodeEditorUser} git -C ${HomeFolder} add .
+                      sudo -u ${CodeEditorUser} git -C ${HomeFolder} commit -m 'Workshop commit'
+                    else
+                      sudo -u ${CodeEditorUser} git -C ${HomeFolder} init
+                      sudo -u ${CodeEditorUser} git -C ${HomeFolder} add .
+                      sudo -u ${CodeEditorUser} git -C ${HomeFolder} commit -m 'Initial commit'
+                    fi
+                    echo "Assets downloaded"
+                  fi
+          - name: InstallCodeEditor
+            action: aws:runShellScript
+            inputs:
+              timeoutSeconds: 600
+              runCommand:
+                - "#!/bin/bash"
+                - set -euo pipefail
+                - !Sub export CodeEditorUser=${CodeEditorUser}
+                - curl -fsSL https://code-editor.amazonaws.com/content/code-editor-server/dist/aws-workshop-studio/install.sh | bash -s -- 2>&1
+          - name: ConfigureNginx
+            action: aws:runShellScript
+            inputs:
+              timeoutSeconds: 600
+              runCommand:
+                - "#!/bin/bash"
+                - set -euo pipefail
+                - !Sub |
+                  tee /etc/nginx/conf.d/code-editor.conf <<EOF
+                  server {
+                      listen 80;
+                      listen [::]:80;
+                      server_name *.cloudfront.net;
+                      location / {
+                        proxy_pass http://localhost:8080/;
+                        proxy_set_header Host \$host;
+                        proxy_set_header Upgrade \$http_upgrade;
+                        proxy_set_header Connection upgrade;
+                        proxy_set_header Accept-Encoding gzip;
+                      }
+                      location /${DevServerBasePath} {
+                        proxy_pass http://localhost:${DevServerPort}/${DevServerBasePath};
+                        proxy_set_header Host \$host;
+                        proxy_set_header Upgrade \$http_upgrade;
+                        proxy_set_header Connection upgrade;
+                        proxy_set_header Accept-Encoding gzip;
+                      }
+                  }
+                  EOF
+                - systemctl enable nginx && systemctl restart nginx
+          - name: ConfigureAuthToken
+            action: aws:runShellScript
+            inputs:
+              timeoutSeconds: 600
+              runCommand:
+                - !Sub |
+                  sudo -u ${CodeEditorUser} --login mkdir -p /home/${CodeEditorUser}/.code-editor-server/data
+                  sudo -u ${CodeEditorUser} --login touch /home/${CodeEditorUser}/.code-editor-server/data/token
+                  echo -n "{{ CodeEditorPassword }}" > /home/${CodeEditorUser}/.code-editor-server/data/token
+          - name: CreateCodeEditorSettings
+            action: aws:runShellScript
+            inputs:
+              timeoutSeconds: 600
+              runCommand:
+                - !Sub sudo -u ${CodeEditorUser} --login mkdir -p /home/${CodeEditorUser}/.code-editor-server/data/User
+                - !Sub touch /home/${CodeEditorUser}/.hushlogin
+                - !Sub mkdir -p ${HomeFolder} && chown -R ${CodeEditorUser}:${CodeEditorUser} ${HomeFolder}
+                - !Sub |
+                  tee /home/${CodeEditorUser}/.code-editor-server/data/User/settings.json <<EOF
+                  {
+                    "aws.telemetry": false,
+                    "extensions.autoUpdate": false,
+                    "extensions.autoCheckUpdates": false,
+                    "telemetry.telemetryLevel": "off",
+                    "security.workspace.trust.startupPrompt": "never",
+                    "security.workspace.trust.enabled": false,
+                    "security.workspace.trust.banner": "never",
+                    "security.workspace.trust.emptyWindow": false,
+                    "workbench.startupEditor": "welcomePage",
+                    "terminal.integrated.cwd": "${HomeFolder}",
+                    "editor.tabSize": 2,
+                    "auto-run-command.rules": [
+                      {
+                        "command": "workbench.action.terminal.new"
+                      }
+                    ]
+                  }
+                  EOF
+                - !Sub |
+                  # Override the systemd service to include authentication
+                  tee /etc/systemd/system/code-editor@${CodeEditorUser}.service <<EOF
+                  [Unit]
+                  Description=Code Editor Server for %i
+                  After=network.target
+
+                  [Service]
+                  Type=simple
+                  User=%i
+                  WorkingDirectory=/home/%i
+                  Environment=HOME=/home/%i
+                  ExecStart=/home/%i/.local/bin/code-editor-server --accept-server-license-terms --host 0.0.0.0 --port 8080 --auth ${AuthMethod} --disable-telemetry ${HomeFolder}
+                  Restart=always
+                  RestartSec=10
+
+                  [Install]
+                  WantedBy=multi-user.target
+                  EOF
+                - !Sub chown -R ${CodeEditorUser}:${CodeEditorUser} /home/${CodeEditorUser}
+                - systemctl daemon-reload
+                - !Sub systemctl enable code-editor@${CodeEditorUser}
+                - !Sub systemctl restart code-editor@${CodeEditorUser}
+          - name: InstallCodeEditorExtensions
+            action: aws:runShellScript
+            inputs:
+              timeoutSeconds: 600
+              runCommand:
+                - "#!/bin/bash"
+                - set -euo pipefail
+                - !Sub |
+                  function install_extension() {
+                    local extension_name=$1
+                    echo "Installing extension: $extension_name"
+                    if ! sudo -u ${CodeEditorUser} --login code-editor-server --install-extension "$extension_name" --force; then
+                        echo "Failed to install $extension_name"
+                        return 1
+                    fi
+                    return 0
+                  }
+                  install_extension "AmazonWebServices.aws-toolkit-vscode"
+                  install_extension "AmazonWebServices.amazon-q-vscode"
+                  install_extension "HashiCorp.terraform"
+                  install_extension "hashicorp.hcl"
+                  install_extension "ms-vscode.live-server"
+                  install_extension "synedra.auto-run-command"
+                - !Sub chown -R ${CodeEditorUser}:${CodeEditorUser} /home/${CodeEditorUser}
+
+  # Lambda roles and functions for SSM execution
+  SSMDocLambdaRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: !Sub lambda.${AWS::URLSuffix}
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - !Sub arn:${AWS::Partition}:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: SSMDocOnEC2
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Action:
+                  - ssm:SendCommand
+                Resource:
+                  - !Sub arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:document/${CodeEditorSSMDoc}
+                  - !Sub arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:document/AmazonCloudWatch-ManageAgent
+                  - !Sub arn:${AWS::Partition}:ec2:${AWS::Region}:${AWS::AccountId}:instance/${CodeEditorInstance}
+              - Effect: Allow
+                Action:
+                  - ssm:ListCommandInvocations
+                  - ssm:GetCommandInvocation
+                Resource: "*"
+
+  RunSSMDocLambda:
+    Type: AWS::Lambda::Function
+    Properties:
+      Description: Run SSM document on EC2 instance
+      Handler: index.lambda_handler
+      Runtime: python3.13
+      MemorySize: 128
+      Timeout: 600
+      Environment:
+        Variables:
+          RetrySleep: 2900
+          AbortTimeRemaining: 3200
+      Architectures:
+        - arm64
+      Role: !GetAtt SSMDocLambdaRole.Arn
+      Code:
+        ZipFile: |
+          import boto3
+          import cfnresponse
+          import logging
+          import time
+          import os
+
+          logger = logging.getLogger()
+          logger.setLevel(logging.INFO)
+
+          def lambda_handler(event, context):
+              if event['RequestType'] != 'Create':
+                  cfnresponse.send(event, context, cfnresponse.SUCCESS, responseData={}, reason='No action to take')
+              else:
+                  sleep_ms = int(os.environ.get('RetrySleep'))
+                  abort_time_remaining_ms = int(os.environ.get('AbortTimeRemaining'))
+                  resource_properties = event['ResourceProperties']
+                  instance_id = resource_properties['InstanceId']
+                  document_name = resource_properties['DocumentName']
+                  cloudwatch_log_group_name = resource_properties['CloudWatchLogGroupName']
+
+                  del resource_properties['ServiceToken']
+                  if 'ServiceTimeout' in resource_properties:
+                      del resource_properties['ServiceTimeout']
+                  del resource_properties['InstanceId']
+                  del resource_properties['DocumentName']
+                  del resource_properties['CloudWatchLogGroupName']
+                  if 'PhysicalResourceId' in resource_properties:
+                      del resource_properties['PhysicalResourceId']
+
+                  parameters = {}
+                  for key, value in resource_properties.items():
+                      parameters[key] = [value]
+
+                  retry = True
+                  attempt_no = 0
+                  time_remaining_ms = context.get_remaining_time_in_millis()
+                  ssm = boto3.client('ssm')
+
+                  while (retry == True):
+                      attempt_no += 1
+                      try:
+                          response = ssm.send_command(
+                              InstanceIds = [instance_id],
+                              DocumentName = document_name,
+                              CloudWatchOutputConfig = {'CloudWatchLogGroupName': cloudwatch_log_group_name, 'CloudWatchOutputEnabled': True},
+                              Parameters = parameters
+                          )
+                          command_id = response['Command']['CommandId']
+                          responseData = {'CommandId': command_id}
+                          cfnresponse.send(event, context, cfnresponse.SUCCESS, responseData, reason='OK')
+                          retry = False
+                      except ssm.exceptions.InvalidInstanceId as e:
+                          time_remaining_ms = context.get_remaining_time_in_millis()
+                          if (time_remaining_ms > abort_time_remaining_ms):
+                              time.sleep(sleep_ms/1000)
+                              retry = True
+                          else:
+                              cfnresponse.send(event, context, cfnresponse.FAILED, responseData={}, reason='Timed out')
+                              retry = False
+                      except Exception as e:
+                          logger.error(e)
+                          cfnresponse.send(event, context, cfnresponse.FAILED, responseData={}, reason=str(e))
+                          retry = False
+
+  RunCodeEditorSSMDoc:
+    Type: Custom::RunSSMDocLambda
+    Properties:
+      ServiceToken: !GetAtt RunSSMDocLambda.Arn
+      ServiceTimeout: 305
+      InstanceId: !Ref CodeEditorInstance
+      DocumentName: !Ref CodeEditorSSMDoc
+      CloudWatchLogGroupName: !Sub /aws/ssm/${CodeEditorSSMDoc}
+      CodeEditorPassword: !GetAtt SecretPlaintext.password
+      LinuxFlavor: !If [IsAL2023, "al2023", "ubuntu"]
+      InstallTerraformTools: !Ref InstallTerraformTools
+      InstallNodeJS: !Ref InstallNodeJS
+      InstallDockerTools: !Ref InstallDockerTools
+      InstallPythonTools: !Ref InstallPythonTools
+      InstallPackerTools: !Ref InstallPackerTools
+      AuthMethod: !Ref AuthMethod
+
+  # EC2 Instance and related resources
+  CodeEditorInstanceBootstrapRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - !Sub ec2.${AWS::URLSuffix}
+                - !Sub ssm.${AWS::URLSuffix}
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - !Sub arn:${AWS::Partition}:iam::aws:policy/AmazonSSMManagedInstanceCore
+        - !Sub arn:${AWS::Partition}:iam::aws:policy/CloudWatchAgentServerPolicy
+        - !Sub arn:${AWS::Partition}:iam::aws:policy/AmazonQDeveloperAccess
+        - !Sub arn:${AWS::Partition}:iam::aws:policy/AdministratorAccess
+      Policies:
+        - PolicyName: !Sub CDKAssumeRolePolicy-${AWS::Region}
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Action:
+                  - sts:AssumeRole
+                Resource:
+                  - !Sub arn:${AWS::Partition}:iam::*:role/cdk-*
+        - PolicyName: !Sub Codewhisperer-${AWS::Region}
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Action:
+                  - codewhisperer:GenerateRecommendations
+                Resource: "*"
+
+  CodeEditorInstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Roles:
+        - !Ref CodeEditorInstanceBootstrapRole
+
+  CodeEditorInstance:
+    Type: AWS::EC2::Instance
+    Properties:
+      ImageId: !If
+        - IsGraviton
+        - !FindInMap [ArmImage, !Ref InstanceOperatingSystem, ImageId]
+        - !FindInMap [AmdImage, !Ref InstanceOperatingSystem, ImageId]
+      InstanceType: !Ref InstanceType
+      BlockDeviceMappings:
+        - DeviceName: !If [IsAL2023, /dev/xvda, /dev/sda1]
+          Ebs:
+            VolumeSize: !Ref InstanceVolumeSize
+            VolumeType: gp3
+            DeleteOnTermination: true
+            Encrypted: true
+      Monitoring: true
+      SubnetId: !If [CreateCustomVPC, !Ref PublicSubnetOne, !Ref "AWS::NoValue"]
+      SecurityGroupIds:
+        - !Ref SecurityGroup
+      IamInstanceProfile: !Ref CodeEditorInstanceProfile
+      UserData:
+        Fn::Base64: !Sub |
+          #cloud-config
+          hostname: ${InstanceName}
+          runcmd:
+            - mkdir -p ${HomeFolder} && chown -R ${CodeEditorUser}:${CodeEditorUser} ${HomeFolder}
+      Tags:
+        - Key: Name
+          Value: !Ref InstanceName
+
+  # CloudFront Distribution
+  CodeEditorInstanceCachePolicy:
+    Type: AWS::CloudFront::CachePolicy
+    Properties:
+      CachePolicyConfig:
+        DefaultTTL: 86400
+        MaxTTL: 31536000
+        MinTTL: 1
+        Name: !Sub
+          - ${InstanceName}-${RandomGUID}
+          - RandomGUID:
+              !Select [
+                0,
+                !Split ["-", !Select [2, !Split ["/", !Ref AWS::StackId]]],
+              ]
+        ParametersInCacheKeyAndForwardedToOrigin:
+          CookiesConfig:
+            CookieBehavior: all
+          EnableAcceptEncodingGzip: False
+          HeadersConfig:
+            HeaderBehavior: whitelist
+            Headers:
+              - Accept-Charset
+              - Authorization
+              - Origin
+              - Accept
+              - Referer
+              - Host
+              - Accept-Language
+              - Accept-Encoding
+              - Accept-Datetime
+          QueryStringsConfig:
+            QueryStringBehavior: all
+
+  CloudFrontDistribution:
+    Type: AWS::CloudFront::Distribution
+    Properties:
+      DistributionConfig:
+        Enabled: True
+        HttpVersion: http2and3
+        CacheBehaviors:
+          - AllowedMethods:
+              - GET
+              - HEAD
+              - OPTIONS
+              - PUT
+              - PATCH
+              - POST
+              - DELETE
+            CachePolicyId: 4135ea2d-6df8-44a3-9df3-4b5a84be39ad
+            Compress: False
+            OriginRequestPolicyId: 216adef6-5c7f-47e4-b989-5492eafa07d3
+            TargetOriginId: !Sub CloudFront-${AWS::StackName}
+            ViewerProtocolPolicy: allow-all
+            PathPattern: "/proxy/*"
+        DefaultCacheBehavior:
+          AllowedMethods:
+            - GET
+            - HEAD
+            - OPTIONS
+            - PUT
+            - PATCH
+            - POST
+            - DELETE
+          CachePolicyId: !Ref CodeEditorInstanceCachePolicy
+          OriginRequestPolicyId: 216adef6-5c7f-47e4-b989-5492eafa07d3
+          TargetOriginId: !Sub CloudFront-${AWS::StackName}
+          ViewerProtocolPolicy: allow-all
+        Origins:
+          - DomainName: !GetAtt CodeEditorInstance.PublicDnsName
+            Id: !Sub CloudFront-${AWS::StackName}
+            CustomOriginConfig:
+              OriginProtocolPolicy: http-only
+
+  # Health Check Lambda
+  CodeEditorHealthCheckLambdaRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: !Sub lambda.${AWS::URLSuffix}
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - !Sub arn:${AWS::Partition}:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+
+  CodeEditorHealthCheckLambda:
+    Type: AWS::Lambda::Function
+    Properties:
+      Description: Run health check on Code Editor instance
+      Handler: index.lambda_handler
+      Runtime: python3.13
+      MemorySize: 128
+      Timeout: 600
+      Environment:
+        Variables:
+          RetrySleep: 2900
+          AbortTimeRemaining: 5000
+      Architectures:
+        - arm64
+      Role: !GetAtt CodeEditorHealthCheckLambdaRole.Arn
+      Code:
+        ZipFile: |
+          import json
+          import cfnresponse
+          import logging
+          import time
+          import os
+          import http.client
+          from urllib.parse import urlparse
+
+          logger = logging.getLogger()
+          logger.setLevel(logging.INFO)
+
+          def healthURLOk(url):
+              try:
+                  parsed_url = urlparse(url)
+                  if parsed_url.scheme == 'https':
+                      conn = http.client.HTTPSConnection(parsed_url.netloc)
+                  else:
+                      conn = http.client.HTTPConnection(parsed_url.netloc)
+                  conn.request("GET", parsed_url.path or "/")
+                  response = conn.getresponse()
+                  content = response.read()
+                  if 200 <= response.status < 400:
+                      response_dict = json.loads(content.decode('utf-8'))
+                      if 'hasActiveConnections' in response_dict:
+                          return True
+                  return False
+              except Exception as e:
+                  logger.error(e)
+                  return False
+              finally:
+                  if 'conn' in locals():
+                      conn.close()
+
+          def lambda_handler(event, context):
+              try:
+                  if event['RequestType'] != 'Create':
+                      cfnresponse.send(event, context, cfnresponse.SUCCESS, responseData={}, reason='No action to take')
+                  else:
+                      sleep_ms = int(os.environ.get('RetrySleep'))
+                      abort_time_remaining_ms = int(os.environ.get('AbortTimeRemaining'))
+                      resource_properties = event['ResourceProperties']
+                      url = resource_properties['Url']
+
+                      time_remaining_ms = context.get_remaining_time_in_millis()
+                      attempt_no = 0
+                      health_check = False
+                      while (attempt_no == 0 or (time_remaining_ms > abort_time_remaining_ms and not health_check)):
+                          attempt_no += 1
+                          health_check = healthURLOk(url)
+                          if not health_check:
+                              time.sleep(sleep_ms/1000)
+                          time_remaining_ms = context.get_remaining_time_in_millis()
+                      if health_check:
+                          cfnresponse.send(event, context, cfnresponse.SUCCESS, responseData={}, reason='Code Editor healthcheck successful')
+                      else:
+                          cfnresponse.send(event, context, cfnresponse.FAILED, responseData={}, reason='Code Editor healthcheck failed')
+              except Exception as e:
+                  logger.error(e)
+                  cfnresponse.send(event, context, cfnresponse.FAILED, responseData={}, reason=str(e))
+
+  Healthcheck:
+    Type: Custom::CodeEditorHealthCheckLambda
+    Properties:
+      ServiceToken: !GetAtt CodeEditorHealthCheckLambda.Arn
+      ServiceTimeout: 610
+      Url: !Sub https://${CloudFrontDistribution.DomainName}/healthz
+
+Outputs:
+  Password:
+    Description: Code Editor Password
+    Value: !GetAtt SecretPlaintext.password
+  URL:
+    Description: |
+      Code Editor URL - if AuthMethod=token, click to access directly. 
+      If AuthMethod=password, click URL then enter Password from outputs when prompted
+    Value: !If
+      - IsTokenAuth
+      - !Sub https://${CloudFrontDistribution.DomainName}/?folder=${HomeFolder}&tkn=${SecretPlaintext.password}
+      - !Sub https://${CloudFrontDistribution.DomainName}/?folder=${HomeFolder}
+  AWSRegion:
+    Description: AWS Region
+    Value: !Ref AWS::Region
+  AWSAccountId:
+    Description: AWS Account ID
+    Value: !Ref AWS::AccountId

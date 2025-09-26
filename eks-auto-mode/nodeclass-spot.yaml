@@ -1,0 +1,18 @@
+apiVersion: eks.amazonaws.com/v1
+kind: NodeClass
+metadata:
+  name: nodeclass-spot
+spec:
+  # Required fields
+  role: AmazonEKSAutoNodeRole # IAM role for EC2 instances
+
+  subnetSelectorTerms:
+    - id: subnet-061aa122c96661e5b # Get subnet id after cluster created
+    - id: subnet-0999336ee7732cbcf
+    - id: subnet-0ea1300977ad00de5
+
+  securityGroupSelectorTerms:
+    - id: sg-0f82c69b985924b2f # Get security group id after cluster created
+
+  ephemeralStorage:
+    size: "20Gi" # Range: 1-59000Gi or 1-64000G or 1-58Ti or 1-64T
