@@ -5,7 +5,7 @@ kind: ClusterConfig
 metadata:
   name: cluster-all-in-one
   region: ap-southeast-2
-  version: "1.32"
+  version: "1.33"
 
 vpc:
   cidr: "10.0.0.0/16"

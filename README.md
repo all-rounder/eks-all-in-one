@@ -53,8 +53,9 @@ all tools in one project
 
   eksctl delete nodegroup --cluster=<clusterName> --name=<nodegroupName>
 
-  # auto mode - node pool
-  kubectl apply -f eks-node-pool.yaml
+  # auto mode - node pool (customized node class)
+  kubectl apply -f eks-auto-mode/nodeclass-spot.yaml
+  kubectl apply -f eks-auto-mode/nodepool-spot.yaml
   ```
 
 - Delete cluster
@@ -72,10 +73,17 @@ all tools in one project
   x86_64 (2vCPU, burstable, 4GB Memory)
   instanceTypes: ["t2.medium", "t3.medium", "t3a.medium"]
 
-  arm64 (1vCPU, AWS Graviton2/3, 2GB Memory, except for t4g.medium)
-  instanceTypes: ["t4g.medium", "c6g.medium", "c7g.medium", "m6g.medium", "m7g.medium"]
+  x86_64 (2vCPU, 8GB Memory)
+  instanceTypes: ["m5.large"]
 
-  instanceTypes: ["c3.large","c4.large","c5.large","c5d.large","c5n.large","c5a.large"]
+  arm64 - AWS Graviton2 (2vCPU, 4GB Memory)
+  instanceTypes: ["t4g.medium"]
+
+  arm64 - AWS Graviton3 (1vCPU, 4GB Memory)
+  instanceTypes: ["m7g.medium"]
+
+  arm64 - AWS Graviton4 (1vCPU, 4GB Memory)
+  instanceTypes: ["m8g.medium"]
   ```
 
 2. Update the kubeconfig file (~/.kube/config)
@@ -188,8 +196,6 @@ kubectl apply -f v2_13_3_ingclass.yaml
 
 ### 1.4c Nginx Ingress Controller
 
-- install
-
 ```
 helm repo add ingress-nginx https://kubernetes.github.io/ingress-nginx
 
@@ -220,7 +226,7 @@ eksctl create iamserviceaccount \
 ```
 
 ```
-eksctl create addon --name aws-ebs-csi-driver --cluster $CLUSTER_NAME --service-account-role-arn arn:aws:iam::763015899447:role/AmazonEKS_EBS_CSI_DriverRole --force
+eksctl create addon --name aws-ebs-csi-driver --cluster $CLUSTER_NAME --service-account-role-arn arn:aws:iam::$ACCOUNT_ID:role/AmazonEKS_EBS_CSI_DriverRole --force
 ```
 
 ## 2. Observability
@@ -228,6 +234,8 @@ eksctl create addon --name aws-ebs-csi-driver --cluster $CLUSTER_NAME --service-
 ### 2.1 Monitoring (metrics)
 
 - Prometheus Helm Chart
+
+  https://github.com/prometheus-community/helm-charts
 
   ```
   kubectl create ns monitoring
@@ -239,6 +247,9 @@ eksctl create addon --name aws-ebs-csi-driver --cluster $CLUSTER_NAME --service-
   helm install monitoring prometheus-community/kube-prometheus-stack \
   -n monitoring \
   -f ./custom_kube_prometheus_stack.yml
+
+  # Option 2: OCI Artifact
+  helm install [RELEASE_NAME] oci://ghcr.io/prometheus-community/charts/kube-prometheus-stack
   ```
 
   ```
@@ -269,13 +280,16 @@ eksctl create addon --name aws-ebs-csi-driver --cluster $CLUSTER_NAME --service-
   NOTE: If you are using an EC2 Instance or Cloud VM, you need to pass --address 0.0.0.0 to the above command. Then you can access the UI on instance-ip:port
 
   - LoadBalancer
-  
+
   ```
   kubectl patch svc monitoring-grafana -n monitoring -p '{"spec": {"type": "LoadBalancer"}}'
   ```
 
   - Ingress
-  
+    ```
+    kubectl apply -f monitoring/prometheus-ingress.yaml
+    kubectl apply -f monitoring/grafana-ingress.yaml
+    ```
 
 - Grafana UI: (admin:prom-operator)
 
@@ -362,6 +376,8 @@ kubectl delete job post-delete-kibana-kibana -n logging
 
 #### 2.2.3 Fluent Bit
 
+Note: Please update 2 HTTP_Passwd fields in the fluentbit-values.yaml file with the password retrieved earlier in 2.2.1 Elasticsearch
+
 ```
 helm repo add fluent https://fluent.github.io/helm-charts
 helm install fluent-bit fluent/fluent-bit -f fluentbit-values.yaml -n logging
@@ -400,7 +416,7 @@ helm upgrade fluent-bit fluent/fluent-bit -f fluentbit-values.yaml -n logging
 
 - Install Jaeger with Custom Values
 
-  Note: Please update the password field and other related field in the jaeger-values.yaml file with the password retrieved earlier in day-4 at step 6: (i.e NJyO47UqeYBsoaEU)"
+  Note: Please update the password field and other related field in the jaeger-values.yaml file with the password retrieved earlier in 2.2.1 Elasticsearch
 
   ```
   helm install jaeger jaegertracing/jaeger -n tracing --values jaeger-values.yaml
@@ -412,6 +428,26 @@ helm upgrade fluent-bit fluent/fluent-bit -f fluentbit-values.yaml -n logging
   kubectl port-forward svc/jaeger-query 8080:80 -n tracing
   ```
 
+## 3. Add-ons
+
+### Metrcis Server
+
+```
+kubectl apply -f https://github.com/kubernetes-sigs/metrics-server/releases/latest/download/components.yaml
+```
+
+### Cert Manager
+
+```
+kubectl apply -f
+```
+
+### External DNS
+
+```
+kubectl apply -f
+```
+
 ## Misc
 
 ### Reference
@@ -422,7 +458,7 @@ helm upgrade fluent-bit fluent/fluent-bit -f fluentbit-values.yaml -n logging
 
 ### Sample workload
 
-Game 2048
+- Game 2048
 
 ```
 kubectl create namespace game-2048
@@ -430,46 +466,49 @@ kubectl create namespace game-2048
 kubectl apply -n game-2048 -f https://raw.githubusercontent.com/kubernetes-sigs/aws-load-balancer-controller/v2.8.0/docs/examples/2048/2048_full.yaml
 ```
 
-### Sample workload
+- abhishek-observability-tutorial
 
-```
-kubectl create ns dev
+  ```
+  kubectl create ns dev
 
-kubectl apply -k kubernetes-manifest/
-```
+  kubectl apply -k workloads/abhishek-observability-tutorial/
+  ```
 
-- Write Custom Metrics
+  - Write Custom Metrics
 
-  - Please take a look at day-4/application/service-a/index.js file to learn more about custom metrics. below is the brief overview
-  - Express Setup: Initializes an Express application and sets up logging with Morgan.
-  - Logging with Pino: Defines a custom logging function using Pino for structured logging.
-  - Prometheus Metrics with prom-client: Integrates Prometheus for monitoring HTTP requests using the prom-client library:
-  - http_requests_total: counter
-  - http_request_duration_seconds: histogram
-  - http_request_duration_summary_seconds: summary
-  - node_gauge_example: gauge for tracking async task duration
+    - Please take a look at day-4/application/service-a/index.js file to learn more about custom metrics. below is the brief overview
+    - Express Setup: Initializes an Express application and sets up logging with Morgan.
+    - Logging with Pino: Defines a custom logging function using Pino for structured logging.
+    - Prometheus Metrics with prom-client: Integrates Prometheus for monitoring HTTP requests using the prom-client library:
+    - http_requests_total: counter
+    - http_request_duration_seconds: histogram
+    - http_request_duration_summary_seconds: summary
+    - node_gauge_example: gauge for tracking async task duration
 
-- Basic Routes:
-  - / : Returns a "Running" status.
-  - /healthy: Returns the health status of the server.
-  - /serverError: Simulates a 500 Internal Server Error.
-  - /notFound: Simulates a 404 Not Found error.
-  - /logs: Generates logs using the custom logging function.
-  - /crash: Simulates a server crash by exiting the process.
-  - /example: Tracks async task duration with a gauge.
-  - /metrics: Exposes Prometheus metrics endpoint.
-  - /call-service-b: To call service b & receive data from service b
+  - Basic Routes:
+    - / : Returns a "Running" status.
+    - /healthy: Returns the health status of the server.
+    - /serverError: Simulates a 500 Internal Server Error.
+    - /notFound: Simulates a 404 Not Found error.
+    - /logs: Generates logs using the custom logging function.
+    - /crash: Simulates a server crash by exiting the process.
+    - /example: Tracks async task duration with a gauge.
+    - /metrics: Exposes Prometheus metrics endpoint.
+    - /call-service-b: To call service b & receive data from service b
 
-```
-kubectl run busybox-crash --image=busybox -- /bin/sh -c "exit 1"
-```
+  ```
+  kubectl run busybox-crash --image=busybox -- /bin/sh -c "exit 1"
+  ```
 
 ### Folder Structure
 
-- ./EKS  
+- ./custom_kube_prometheus_stack
+  Alert Manager custom file
+
+- ./abhishek-eks-tutorial  
   Three tier architecture - Stan's Robot Shop
 
-- ./kubernetes-manifest  
+- ./abhishek-observability-tutorial  
   Sample workload (metrics, logs, traces)
 
 - ./fluentbit-values.yaml  
@@ -477,6 +516,30 @@ kubectl run busybox-crash --image=busybox -- /bin/sh -c "exit 1"
 
 - ./jaeger-values.yaml  
   Helm chart custom file
+
+### Tips
+
+- kubectl alias and auto completion
+
+  ```
+  cat << EOF >> ~/.bashrc
+
+  source <(kubectl completion bash)
+  alias k=kubectl
+  complete -F __start_kubectl k
+
+  EOF
+
+  source ~/.bashrc
+  ```
+
+- Number of Pods per Node
+
+  ```
+  kubectl get pods -o wide --all-namespaces | awk '{print $8}' | sort | uniq -c
+  ```
+
+### EC2 instance
 
 Amazon EC2 instance type naming conventions  
 https://docs.aws.amazon.com/ec2/latest/instancetypes/instance-type-names.html
@@ -513,6 +576,8 @@ t4g.micro 4
 t4g.nano 4
 t4g.small 11
 t4g.xlarge 58
+m5.2xlarge 58
+m5.large 29
 m7g.12xlarge 234
 m7g.16xlarge 737
 m7g.2xlarge 58

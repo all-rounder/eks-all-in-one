@@ -4,7 +4,7 @@ kind: ClusterConfig
 metadata:
   name: cluster-spot
   region: ap-southeast-2
-  version: "1.32"
+  version: "1.33"
 
 managedNodeGroups:
   - name: nodegroup-spot
